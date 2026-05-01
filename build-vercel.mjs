@@ -15,9 +15,7 @@ fs.mkdirSync(`${VERCEL_DIR}/static`, { recursive: true });
 fs.mkdirSync(`${VERCEL_DIR}/functions/index.func`, { recursive: true });
 
 // 2. Copy client assets to static
-if (fs.existsSync('dist/client')) {
-  fs.cpSync('dist/client', `${VERCEL_DIR}/static`, { recursive: true });
-}
+fs.cpSync('dist/client', `${VERCEL_DIR}/static`, { recursive: true });
 
 // 3. Create config.json
 const config = {
@@ -38,157 +36,58 @@ const funcConfig = {
 fs.writeFileSync(`${VERCEL_DIR}/functions/index.func/.vc-config.json`, JSON.stringify(funcConfig, null, 2));
 
 // 5. Copy server bundle into function
-if (fs.existsSync('dist/server')) {
-  fs.cpSync('dist/server', `${VERCEL_DIR}/functions/index.func/server`, { recursive: true });
-}
+fs.cpSync('dist/server', `${VERCEL_DIR}/functions/index.func/server`, { recursive: true });
 
-// 6. Create package.json for the function
-const pkgJson = {
-  "type": "module",
-  "dependencies": {}
-};
-fs.writeFileSync(`${VERCEL_DIR}/functions/index.func/package.json`, JSON.stringify(pkgJson, null, 2));
-
-// 7. Create index.mjs wrapper for Node Serverless Function
+// 6. Create index.mjs wrapper for Node Serverless Function
 const indexJs = `
-let handler;
+import handler from './server/server.js';
 
-async function loadHandler() {
-  try {
-    // TanStack Start outputs server in different ways depending on configuration
-    // Try multiple possible locations and export patterns
-    const possiblePaths = [
-      './server/index.js',
-      './server/index.mjs',
-      './server.js',
-      './server.mjs',
-    ];
-    
-    let lastError;
-    for (const path of possiblePaths) {
-      try {
-        console.log('Trying to load handler from:', path);
-        const mod = await import(path);
-        const h = mod.default || mod.handler || mod;
-        if (typeof h === 'function') {
-          console.log('Successfully loaded handler from:', path);
-          return h;
-        }
-      } catch (err) {
-        lastError = err;
-        console.log('Failed to load from', path, ':', err.message);
-      }
-    }
-    
-    throw new Error(\`Failed to load server handler. Last error: \${lastError?.message || 'Unknown error'}\`);
-  } catch (err) {
-    console.error('Failed to load server handler:', err);
-    throw err;
-  }
-}
-
+// Convert Node req/res to Web Request/Response for the TanStack Start handler
 export default async function(req, res) {
-  try {
-    if (!handler) {
-      handler = await loadHandler();
-    }
+  const protocol = req.headers['x-forwarded-proto'] || 'http';
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  const url = new URL(req.url, \`\${protocol}://\${host}\`);
 
-    // Convert Node req to Web Request
-    const protocol = req.headers['x-forwarded-proto'] || 'http';
-    const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
-    
-    // Construct full URL with proper handling
-    let fullUrl;
-    try {
-      fullUrl = new URL(req.url, \`\${protocol}://\${host}\`).href;
-    } catch (e) {
-      // Fallback if URL construction fails
-      fullUrl = \`\${protocol}://\${host}\${req.url || '/'}\`;
-    }
-    
-    const headers = new Headers();
-    Object.entries(req.headers).forEach(([key, value]) => {
-      if (value) {
-        const headerValue = Array.isArray(value) ? value.join(', ') : String(value);
-        if (headerValue) {
-          headers.append(key, headerValue);
-        }
-      }
-    });
-    
-    const init = {
-      method: req.method || 'GET',
-      headers,
-    };
-    
-    // Handle request body for non-GET/HEAD/OPTIONS requests
-    if (req.method && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
-      init.body = await new Promise((resolve, reject) => {
-        const chunks = [];
-        req.on('data', chunk => chunks.push(chunk));
-        req.on('error', reject);
-        req.on('end', () => {
-          const buffer = Buffer.concat(chunks);
-          resolve(buffer.length > 0 ? buffer : undefined);
-        });
-      });
-    }
-    
-    const request = new Request(fullUrl, init);
-    
-    // Call the TanStack Start handler
-    let response;
-    try {
-      response = await handler(request);
-    } catch (handlerErr) {
-      console.error('Handler execution error:', handlerErr);
-      throw handlerErr;
-    }
-    
-    // Ensure response is valid
-    if (!response || typeof response.status !== 'number') {
-      throw new Error('Handler did not return a valid Response object');
-    }
-    
-    // Send the Web Response back via Node res
-    res.statusCode = response.status;
-    res.statusMessage = response.statusText || '';
-    
-    // Set response headers
-    response.headers.forEach((value, key) => {
-      res.setHeader(key, value);
-    });
-    
-    // Handle response body
-    if (response.body) {
-      const reader = response.body.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          res.write(Buffer.from(value));
-        }
-      } catch (streamErr) {
-        console.error('Error reading response body:', streamErr);
-      } finally {
-        try {
-          reader.releaseLock();
-        } catch (e) {
-          // Ignore lock release errors
-        }
-      }
-    }
-    
-    res.end();
-  } catch (error) {
-    console.error('Handler error:', error);
-    res.statusCode = 500;
-    res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({
-      error: 'Internal Server Error',
-      message: error?.message || 'Unknown error'
-    }));
+  const headers = new Headers();
+  for (const key in req.headers) {
+    if (req.headers[key]) headers.append(key, req.headers[key]);
   }
+
+  const init = {
+    method: req.method,
+    headers,
+  };
+
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    init.body = await new Promise((resolve) => {
+      const chunks = [];
+      req.on('data', c => chunks.push(c));
+      req.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+  }
+
+  const request = new Request(url.href, init);
+
+  // handler is the default export from server.js: { fetch(request): Response }
+  const response = await handler.fetch(request);
+
+  res.statusCode = response.status;
+  res.statusMessage = response.statusText;
+
+  response.headers.forEach((value, key) => {
+    res.setHeader(key, value);
+  });
+
+  if (response.body) {
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(value);
+    }
+  }
+
+  res.end();
 }
 `;
 fs.writeFileSync(`${VERCEL_DIR}/functions/index.func/index.mjs`, indexJs);
