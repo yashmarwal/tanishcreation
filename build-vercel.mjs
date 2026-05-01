@@ -1,49 +1,86 @@
 import fs from 'fs';
-import path from 'path';
+import { build } from 'esbuild';
 
-console.log("Building Vercel Output API format...");
+console.log('Building Vercel Output API format...');
 
 const VERCEL_DIR = '.vercel/output';
+const FUNC_DIR = `${VERCEL_DIR}/functions/index.func`;
 
-// Clean if exists
+// Clean existing output
 if (fs.existsSync(VERCEL_DIR)) {
   fs.rmSync(VERCEL_DIR, { recursive: true, force: true });
 }
 
-// 1. Create directories
+// Create directories
 fs.mkdirSync(`${VERCEL_DIR}/static`, { recursive: true });
-fs.mkdirSync(`${VERCEL_DIR}/functions/index.func`, { recursive: true });
+fs.mkdirSync(FUNC_DIR, { recursive: true });
 
-// 2. Copy client assets to static
+// Copy client assets to static
 fs.cpSync('dist/client', `${VERCEL_DIR}/static`, { recursive: true });
 
-// 3. Create config.json
-const config = {
-  version: 3,
-  routes: [
-    { handle: "filesystem" },
-    { src: "/(.*)", dest: "/index" }
-  ]
-};
-fs.writeFileSync(`${VERCEL_DIR}/config.json`, JSON.stringify(config, null, 2));
+// Vercel routing config: serve static files first, fall back to SSR function
+fs.writeFileSync(
+  `${VERCEL_DIR}/config.json`,
+  JSON.stringify(
+    {
+      version: 3,
+      routes: [
+        { handle: 'filesystem' },
+        { src: '/(.*)', dest: '/index' },
+      ],
+    },
+    null,
+    2,
+  ),
+);
 
-// 4. Create function config
-const funcConfig = {
-  runtime: "nodejs20.x",
-  handler: "index.mjs",
-  launcherType: "Nodejs"
-};
-fs.writeFileSync(`${VERCEL_DIR}/functions/index.func/.vc-config.json`, JSON.stringify(funcConfig, null, 2));
+// Vercel function runtime config
+fs.writeFileSync(
+  `${FUNC_DIR}/.vc-config.json`,
+  JSON.stringify(
+    {
+      runtime: 'nodejs20.x',
+      handler: 'index.mjs',
+      launcherType: 'Nodejs',
+    },
+    null,
+    2,
+  ),
+);
 
-// 5. Copy server bundle into function
-fs.cpSync('dist/server', `${VERCEL_DIR}/functions/index.func/server`, { recursive: true });
+// Bundle the server with esbuild into a fully self-contained output.
+// The Vite build leaves npm imports (h3-v2, react, @tanstack/*, etc.) as bare
+// specifiers — they work locally because node_modules is present, but inside a
+// Vercel serverless function there is no node_modules, so they must be inlined.
+// esbuild resolves and bundles all dependencies; only true Node.js built-ins
+// (handled natively by the runtime) stay external.
+// Code-splitting is enabled so that the dynamic import() calls used by
+// TanStack Start for lazy route chunks are preserved as separate chunk files
+// rather than being inlined into one giant bundle.
+console.log('Bundling server with esbuild...');
+await build({
+  entryPoints: ['dist/server/server.js'],
+  bundle: true,
+  splitting: true,
+  platform: 'node',
+  target: 'node20',
+  format: 'esm',
+  outdir: `${FUNC_DIR}/server`,
+  // 'canvas' is an optional native addon used by some matter-js headless
+  // setups; it is never installed, so mark it external to avoid a build error.
+  external: ['canvas'],
+  allowOverwrite: true,
+  logLevel: 'info',
+});
 
-// 6. Create index.mjs wrapper for Node Serverless Function
-const indexJs = `
-import handler from './server/server.js';
+// Thin Node.js http handler that adapts the Web Request/Response API used by
+// the TanStack Start handler to the Node.js IncomingMessage/ServerResponse API
+// expected by Vercel's Nodejs launcher.
+fs.writeFileSync(
+  `${FUNC_DIR}/index.mjs`,
+  `import handler from './server/server.js';
 
-// Convert Node req/res to Web Request/Response for the TanStack Start handler
-export default async function(req, res) {
+export default async function (req, res) {
   const protocol = req.headers['x-forwarded-proto'] || 'http';
   const host = req.headers['x-forwarded-host'] || req.headers.host;
   const url = new URL(req.url, \`\${protocol}://\${host}\`);
@@ -53,22 +90,17 @@ export default async function(req, res) {
     if (req.headers[key]) headers.append(key, req.headers[key]);
   }
 
-  const init = {
-    method: req.method,
-    headers,
-  };
+  const init = { method: req.method, headers };
 
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     init.body = await new Promise((resolve) => {
       const chunks = [];
-      req.on('data', c => chunks.push(c));
+      req.on('data', (c) => chunks.push(c));
       req.on('end', () => resolve(Buffer.concat(chunks)));
     });
   }
 
   const request = new Request(url.href, init);
-
-  // handler is the default export from server.js: { fetch(request): Response }
   const response = await handler.fetch(request);
 
   res.statusCode = response.status;
@@ -89,7 +121,7 @@ export default async function(req, res) {
 
   res.end();
 }
-`;
-fs.writeFileSync(`${VERCEL_DIR}/functions/index.func/index.mjs`, indexJs);
+`,
+);
 
-console.log("Vercel Output built successfully!");
+console.log('Vercel Output built successfully!');
