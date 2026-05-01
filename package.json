@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
+    "vercel-build": "vite build && node build-vercel.mjs",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "lint": "eslint .",
@@ -44,7 +45,9 @@
     "@tanstack/react-query": "^5.83.0",
     "@tanstack/react-router": "^1.168.0",
     "@tanstack/react-start": "^1.167.14",
+    "@tanstack/react-start-plugin": "^1.131.50",
     "@tanstack/router-plugin": "^1.167.10",
+    "@tanstack/start": "^1.120.20",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -67,6 +70,7 @@
     "tailwindcss": "^4.2.1",
     "tw-animate-css": "^1.3.4",
     "vaul": "^1.1.2",
+    "vinxi": "^0.5.11",
     "vite-tsconfig-paths": "^6.0.2",
     "zod": "^3.24.2"
   },
