@@ -58,7 +58,7 @@ fs.writeFileSync(
 // TanStack Start for lazy route chunks are preserved as separate chunk files
 // rather than being inlined into one giant bundle.
 console.log('Bundling server with esbuild...');
-await build({
+const result = await build({
   entryPoints: ['dist/server/server.js'],
   bundle: true,
   splitting: true,
@@ -71,7 +71,14 @@ await build({
   external: ['canvas'],
   allowOverwrite: true,
   logLevel: 'info',
+  metafile: true,
 });
+const outputFiles = Object.keys(result.metafile.outputs);
+console.log(`esbuild produced ${outputFiles.length} output files`);
+const serverEntry = outputFiles.find((f) => f.endsWith('server/server.js'));
+if (!serverEntry) throw new Error('esbuild did not produce server/server.js — bundle failed');
+const bytes = result.metafile.outputs[serverEntry].bytes;
+console.log(`server.js bundle size: ${(bytes / 1024 / 1024).toFixed(2)} MB`);
 
 // Thin Node.js http handler that adapts the Web Request/Response API used by
 // the TanStack Start handler to the Node.js IncomingMessage/ServerResponse API

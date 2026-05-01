@@ -75,6 +75,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "esbuild": "0.25.12",
     "@eslint/js": "^9.32.0",
     "@lovable.dev/vite-tanstack-config": "^1.4.0",
     "@types/matter-js": "^0.20.2",
