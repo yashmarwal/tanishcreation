@@ -1,0 +1,1 @@
+import{j as e}from"./index-BdRUUb_M.js";const n=({error:t,reset:s})=>e.jsx("div",{className:"min-h-screen flex items-center justify-center pt-20",children:e.jsxs("div",{className:"text-center",children:[e.jsx("p",{className:"text-destructive",children:t.message}),e.jsx("button",{onClick:s,className:"mt-4 text-accent",children:"Try again"})]})});export{n as errorComponent};

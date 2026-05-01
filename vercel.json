@@ -1,0 +1,10 @@
+{
+  "buildCommand": "npm run vercel-build",
+  "outputDirectory": ".vercel/output",
+  "installCommand": "npm ci",
+  "nodeVersion": "20.x",
+  "env": {
+    "NODE_ENV": "production"
+  }
+}
+
